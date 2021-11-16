@@ -1,0 +1,169 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <CL/cl.h>
+#include<time.h>
+#include<iostream>
+#include<chrono>
+
+using namespace std;
+using namespace std::chrono;
+
+#define VECTOR_SIZE 16384
+#define LOCAL_SIZE 256
+
+#define CHECK_ERROR(err) \
+    if(err != CL_SUCCESS) { \
+        printf("[%s:%d] OpenCL error %d\n", __FILE__, __LINE__, err); \
+        exit(EXIT_FAILURE); \
+    }
+
+char *get_source_code(const char *file_name, size_t *len) {
+	char *source_code;
+	char buf[2] = "\0";
+	int cnt = 0;
+	size_t length;
+	FILE *file = fopen(file_name, "r");
+	if (file == NULL) {
+		printf("[%s:%d] Failed to open %s\n", __FILE__, __LINE__, file_name);
+		exit(EXIT_FAILURE);
+	}
+	fseek(file, 0, SEEK_END);
+	length = (size_t)ftell(file);
+	rewind(file);
+
+	source_code = (char *)malloc(length + 1);
+	fread(source_code, length, 1, file);
+
+	for (int i = 0; i < length; i++) {
+		buf[0] = source_code[i];
+		if (buf[0] == '\n') cnt ++ ;
+	}
+	source_code[length - cnt] = '\0';
+	fclose(file);
+	*len = length - cnt;
+	return source_code;
+}
+
+int main() {
+	srand((unsigned)time(NULL));
+	cl_int err;
+	cl_uint i,num_platforms;
+	cl_platform_id *platforms;
+	system_clock::time_point start, end;
+	nanoseconds nano;
+
+	//GetPlatforms
+	err = clGetPlatformIDs(0, NULL, &num_platforms);
+	CHECK_ERROR(err);
+
+	platforms = (cl_platform_id *)malloc(sizeof(cl_platform_id)*num_platforms);
+	err=clGetPlatformIDs(num_platforms, platforms, NULL);
+	CHECK_ERROR(err);
+
+
+	//GetDevices
+	cl_device_id *devices,device;
+	cl_uint num_devices;
+	err = clGetDeviceIDs(platforms[1], CL_DEVICE_TYPE_ALL, 0, NULL, &num_devices);
+	CHECK_ERROR(err);
+
+	devices = (cl_device_id *)malloc(sizeof(cl_device_id)*num_devices);
+	err = clGetDeviceIDs(platforms[1], CL_DEVICE_TYPE_ALL, num_devices, devices, NULL);
+	CHECK_ERROR(err);
+
+	//CreateContext
+	cl_context context;
+	device = devices[1];
+	context = clCreateContext(NULL, 1, &device, NULL, NULL, &err);
+	CHECK_ERROR(err);
+
+
+	//Create Command Queue
+	cl_command_queue *queues,queue;
+	queue = clCreateCommandQueueWithProperties(context, device, 0, &err);
+	CHECK_ERROR(err);
+
+
+	//Get SourceCode
+	char *kernel_source;
+	size_t kernel_source_size;
+	kernel_source = get_source_code("kernel.cl", &kernel_source_size);
+	
+	//Create Program
+	cl_program program;
+	program = clCreateProgramWithSource(context, 1, (const char **)&kernel_source, &kernel_source_size, &err);
+	CHECK_ERROR(err);
+
+	//Build Program
+	err = clBuildProgram(program, 1, &device, "", NULL, NULL);
+	CHECK_ERROR(err);
+
+	//Create Kernel Object
+	cl_kernel kernel_vec_add;
+	kernel_vec_add = clCreateKernel(program, "vec_add", &err);
+	CHECK_ERROR(err);
+
+	//Create Vector A,B,C
+	int A[VECTOR_SIZE], B[VECTOR_SIZE], C[VECTOR_SIZE],ANSWER[VECTOR_SIZE];
+	for (i = 0; i < VECTOR_SIZE; i++) {
+		A[i] = rand() % 1024;
+		B[i] = rand() % 1024;
+	}
+
+	start = system_clock::now();
+	for (i = 0; i < VECTOR_SIZE; i++) {
+		ANSWER[i] = A[i] + B[i];
+	}
+	end = system_clock::now();
+	nano = end - start;
+	cout << "On CPU = " << nano.count() << "ns\n";
+
+
+	//Create Buffer Object
+	cl_mem bufA, bufB, bufC;
+	bufA = clCreateBuffer(context, CL_MEM_READ_WRITE,sizeof(int)*VECTOR_SIZE,NULL,&err);
+	CHECK_ERROR(err);
+	bufB = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(int)*VECTOR_SIZE, NULL, &err);
+	CHECK_ERROR(err);
+	bufC = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(int)*VECTOR_SIZE, NULL, &err);
+	CHECK_ERROR(err);
+
+
+	//Write Buffer
+	err = clEnqueueWriteBuffer(queue, bufA, CL_TRUE, 0, sizeof(int)*VECTOR_SIZE, A, 0, NULL, NULL);
+	CHECK_ERROR(err);
+	err = clEnqueueWriteBuffer(queue, bufB, CL_TRUE, 0, sizeof(int)*VECTOR_SIZE, B, 0, NULL, NULL);
+	CHECK_ERROR(err);
+
+	//Set Kernel Arg
+	err = clSetKernelArg(kernel_vec_add, 0, sizeof(bufA), &bufA);
+	CHECK_ERROR(err);
+	err = clSetKernelArg(kernel_vec_add, 1, sizeof(bufB), &bufB);
+	CHECK_ERROR(err);
+	err = clSetKernelArg(kernel_vec_add, 2, sizeof(bufC), &bufC);
+	CHECK_ERROR(err);
+
+
+	//Excute Kernel
+	size_t global_size = VECTOR_SIZE;
+	size_t local_size = LOCAL_SIZE;
+	
+	start = system_clock::now();
+	clEnqueueNDRangeKernel(queue, kernel_vec_add, 1, NULL, &global_size, &local_size, 0, NULL, NULL);
+	end = system_clock::now();
+	nano = end - start;
+	cout << "On GPU = " << nano.count() << "ns\n";
+
+	//Read Buffer
+	err = clEnqueueReadBuffer(queue, bufC, CL_TRUE, 0, sizeof(int)*VECTOR_SIZE, C, 0, NULL, NULL);
+	CHECK_ERROR(err);
+
+	//Result Accuracy
+	int correct = 0;
+	for (i = 0; i < VECTOR_SIZE; i++) {
+		if (ANSWER[i] == C[i]) correct++;
+	}
+	printf("Accuracy = %0.3lf %%\n", 100*(double)correct / VECTOR_SIZE);
+
+	return 0;
+}
