@@ -133,6 +133,7 @@ int main() {
 	int SIZE=538870912;
 	cl_int err, i, j;
 	clock_t start, end;
+	cl_event read_event;
 
 	//GetPlatforms
 	cl_uint num_platforms;
@@ -176,7 +177,7 @@ int main() {
 
 	//Create Command Queue
 	cl_command_queue *queues, queue;
-	queue = clCreateCommandQueueWithProperties(context, device, 0, &err);
+	queue = clCreateCommandQueue(context, device, CL_QUEUE_PROFILING_ENABLE, &err);
 	CHECK_ERROR(err);
 
 
@@ -219,7 +220,7 @@ int main() {
 
 
 	//Write Buffer
-	err = clEnqueueWriteBuffer(queue, bufA, CL_TRUE, 0, sizeof(double)*(SIZE / LOCAL_SIZE), A, 0, NULL, NULL);
+	err = clEnqueueWriteBuffer(queue, bufA, CL_TRUE, 0, sizeof(double)*(SIZE / LOCAL_SIZE), A, 0, NULL,NULL);
 	CHECK_ERROR(err);
 
 	//Set Kernel Arg
@@ -233,10 +234,7 @@ int main() {
 	size_t global_size = SIZE;
 	size_t local_size = LOCAL_SIZE;
 
-	start = clock();
-	clEnqueueNDRangeKernel(queue, kernel_integral, 1, NULL, &global_size, &local_size, 0, NULL, NULL);
-	end = clock();
-	printf("On GPU = %f sec\n", (double)((end - start) / CLK_TCK));
+	clEnqueueNDRangeKernel(queue, kernel_integral, 1, NULL, &global_size, &local_size, 0, NULL, &read_event);
 
 	//Read Buffer
 	err = clEnqueueReadBuffer(queue, bufA, CL_TRUE, 0, (SIZE) / (LOCAL_SIZE) * sizeof(double), (void *)A, 0, NULL, NULL);
@@ -246,6 +244,12 @@ int main() {
 	double compare = 0.0;
 	for (int i = 0; i < SIZE / LOCAL_SIZE; i++) compare += A[i];
 
+	clFinish(queue);
+	cl_ulong k_start, k_end;
+	clGetEventProfilingInfo(read_event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &k_start, NULL);
+	clGetEventProfilingInfo(read_event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &k_end, NULL);
+	
+	printf("On GPU = %lf s\n", (double)(k_end - k_start)/1000000000);
 	printf("On CPU Result = %lf\nOn GPU Result = %lf\n", answer, compare);
 
 	return 0;
