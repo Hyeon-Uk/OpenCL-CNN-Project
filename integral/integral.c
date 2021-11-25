@@ -123,15 +123,15 @@ void show_info(cl_uint num_platforms, cl_platform_id *platforms) {
 }
 
 double f(double x) {
-	return 3*x*x + 2*x + 1;
+	return (double)(3.0 * x*x + 2.0 * x + 1.0);
 }
 
 
 
 int main() {
 	srand(time(NULL));
-	int SIZE;
-	cl_int err,i,j;
+	int SIZE=538870912;
+	cl_int err, i, j;
 	clock_t start, end;
 
 	//GetPlatforms
@@ -156,8 +156,7 @@ int main() {
 
 	printf("expression = 3*x*x + 2*x + 1\n");
 	printf("range 0~1\n");
-	printf("Input N (2의 배수이면서 256보다 큰 값) : ");
-	scanf("%d", &SIZE);
+	printf("N = 538,870,912\n");
 	//GetDevices
 	cl_device_id *devices, device;
 	cl_uint num_devices;
@@ -201,44 +200,34 @@ int main() {
 	CHECK_ERROR(err);
 
 	//Create Vector A,B
-	double *A,*B;
-	A = (double *)malloc(sizeof(double)*SIZE);
-	B = (double *)malloc(sizeof(double)*(SIZE/LOCAL_SIZE));
-	double answer=0, xpos;
-	int index=0;
-	for (xpos = 0; xpos < 1 ; xpos+=(1.0/(double)SIZE)) {
-		A[index++] = (1.0 / (double)SIZE)*f(xpos);
-	}
+	double *A;
+	A = (double *)malloc(sizeof(double)*(SIZE/LOCAL_SIZE));
+	double answer = 0, xpos;
+	double dx = (1.0 / (double)SIZE);
 	start = clock();
-	for (i = 0; i < SIZE; i++) {
-		answer += A[i];
+	for (xpos = 0; xpos < 1; xpos += dx) {
+		answer += dx*f(xpos);
 	}
 	end = clock();
 	printf("On CPU = %f sec\n", (double)((end - start) / CLK_TCK));
 
 
 	//Create Buffer Object
-	cl_mem bufA,bufB;
-	bufA = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(double)*SIZE, NULL, &err);
-	bufB = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(double)*(SIZE / LOCAL_SIZE), NULL, &err);
+	cl_mem bufA;
+	bufA = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(double)*(SIZE/LOCAL_SIZE), NULL, &err);
 	CHECK_ERROR(err);
 
 
 	//Write Buffer
-	err = clEnqueueWriteBuffer(queue, bufA, CL_TRUE, 0, sizeof(double)*SIZE, A, 0, NULL, NULL);
-	CHECK_ERROR(err);
-	err = clEnqueueWriteBuffer(queue, bufB, CL_TRUE, 0, sizeof(double)*(SIZE / LOCAL_SIZE), B, 0, NULL, NULL);
+	err = clEnqueueWriteBuffer(queue, bufA, CL_TRUE, 0, sizeof(double)*(SIZE / LOCAL_SIZE), A, 0, NULL, NULL);
 	CHECK_ERROR(err);
 
 	//Set Kernel Arg
 	err = clSetKernelArg(kernel_integral, 0, sizeof(cl_mem), (void *)&bufA);
 	CHECK_ERROR(err);
-	err = clSetKernelArg(kernel_integral, 1, sizeof(cl_mem), (void *)&bufB);
+	err = clSetKernelArg(kernel_integral, 1, LOCAL_SIZE * sizeof(double), NULL);
 	CHECK_ERROR(err);
-	err = clSetKernelArg(kernel_integral, 2, LOCAL_SIZE*sizeof(double), NULL);
-	CHECK_ERROR(err);
-	err = clSetKernelArg(kernel_integral, 3, sizeof(cl_int), (void *)&SIZE);
-
+	err = clSetKernelArg(kernel_integral, 2, sizeof(cl_int), (void *)&SIZE);
 
 	//Excute Kernel
 	size_t global_size = SIZE;
@@ -250,14 +239,12 @@ int main() {
 	printf("On GPU = %f sec\n", (double)((end - start) / CLK_TCK));
 
 	//Read Buffer
-	err = clEnqueueReadBuffer(queue, bufB, CL_TRUE, 0, (SIZE)/(LOCAL_SIZE)*sizeof(double), (void *)B, 0, NULL, NULL);
+	err = clEnqueueReadBuffer(queue, bufA, CL_TRUE, 0, (SIZE) / (LOCAL_SIZE) * sizeof(double), (void *)A, 0, NULL, NULL);
 	CHECK_ERROR(err);
 
 	//Result Accuracy
 	double compare = 0.0;
-	for (i = 0; i < SIZE / LOCAL_SIZE; i++) {
-		compare += B[i];
-	}
+	for (int i = 0; i < SIZE / LOCAL_SIZE; i++) compare += A[i];
 
 	printf("On CPU Result = %lf\nOn GPU Result = %lf\n", answer, compare);
 
