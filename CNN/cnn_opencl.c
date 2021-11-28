@@ -20,11 +20,11 @@ cl_platform_id* platforms;
 cl_device_id* devices, device;
 cl_uint num_devices;
 cl_context context;
-cl_command_queue queue;
+cl_command_queue queue,read_queue;
 cl_program program;
 char* kernel_source;
 size_t kernel_source_size;
-cl_kernel kernel_conv,kernel_pool;
+cl_kernel kernel_conv,kernel_pool,kernel_fclayer;
 cl_mem bufImg, bufNetwork, bufConvInput,bufConvMiddle,bufConvOutput,bufPoolInput;
 cl_uint image_offset, filter_offset;
 
@@ -86,6 +86,8 @@ void cnn_init() {
     queue = clCreateCommandQueue(context, device, 0, &err);
     CHECK_ERROR(err);
 
+    read_queue = clCreateCommandQueue(context, device, 0, &err);
+    CHECK_ERROR(err);
 
     //Get SourceCode
     kernel_source = get_source_code("kernel.cl", &kernel_source_size);
@@ -103,6 +105,9 @@ void cnn_init() {
     CHECK_ERROR(err);
 
     kernel_pool = clCreateKernel(program, "pool", &err);
+    CHECK_ERROR(err);
+
+    kernel_fclayer = clCreateKernel(program, "fclayer", &err);
     CHECK_ERROR(err);
 }
 
@@ -172,18 +177,30 @@ void max_pooling_cnn(cl_mem* input, cl_mem* output, int DIM, int nbyn) {
     CHECK_ERROR(err);
 }
 
+void fc_layer_cnn(cl_mem* input, cl_mem* output, cl_mem* networks, int inDIM,int outDIM) {
+    //Set Kernel Arg
+    err = clSetKernelArg(kernel_fclayer, 0, sizeof(cl_mem), input);
+    CHECK_ERROR(err);
 
-void fc_layer(float* input, float* output, float* weights, float* biases, int inDim, int outDim) {
-	float sum;
-	for (int outNeuron = 0; outNeuron < outDim; ++outNeuron) {
-		sum = 0;
-		for (int inNeuron = 0; inNeuron < inDim; ++inNeuron) {
-			sum += input[inNeuron] * (*weights++);
-		}
-		sum += biases[outNeuron];
-		if (sum > 0) output[outNeuron] = sum;	//ReLU
-		else output[outNeuron] = 0;
-	}
+    err = clSetKernelArg(kernel_fclayer, 1, sizeof(cl_mem), output);
+    CHECK_ERROR(err);
+
+    err = clSetKernelArg(kernel_fclayer, 2, sizeof(cl_mem), networks);
+    CHECK_ERROR(err);
+
+    err = clSetKernelArg(kernel_fclayer, 3, sizeof(int), &inDIM);
+    CHECK_ERROR(err);
+
+    err = clSetKernelArg(kernel_fclayer, 4, sizeof(int), &outDIM);
+    CHECK_ERROR(err);
+
+    err = clSetKernelArg(kernel_fclayer, 5, sizeof(int), &filter_offset);
+    CHECK_ERROR(err);
+    size_t global_size = outDIM;
+
+    //enqueue
+    err = clEnqueueNDRangeKernel(queue, kernel_fclayer, 1, 0, &global_size, NULL, 0, NULL, NULL);
+    CHECK_ERROR(err);
 }
 
 static void softmax(float* input, int N) {
@@ -242,25 +259,6 @@ void cnn(float* images, float* network, int* labels, float* confidences, int num
     bufPoolInput = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(float) * 32*32  * 512 , NULL, &err);
     CHECK_ERROR(err);
 
-    float* w[21];
-    float* b[21];
-    int offset = 0;
-    // link weights and biases to network
-    for (int i = 0; i < 17; ++i) {
-        if (i == 2 || i == 5 || i == 9 || i == 13) i++;	// pooling layer has no weights and biases
-        w[i] = network + offset;
-        offset += 3 * 3 * INPUT_DIM[i] * OUTPUT_DIM[i];
-        b[i] = network + offset;
-        offset += OUTPUT_DIM[i];
-    }
-    for (int i = 18; i < 21; ++i) {
-        w[i] = network + offset;
-        offset += INPUT_DIM[i] * OUTPUT_DIM[i];
-        b[i] = network + offset;
-        offset += OUTPUT_DIM[i];
-    }
-
-
     // allocate memory for layer
     float* layer[21];
     for (int i = 0; i < 21; ++i) {
@@ -283,10 +281,6 @@ void cnn(float* images, float* network, int* labels, float* confidences, int num
         convolution_cnn(&bufConvOutput, &bufPoolInput, &bufNetwork, INPUT_DIM[4], OUTPUT_DIM[4], NBYN[4]);
         image_offset = 0; filter_offset += (9 * INPUT_DIM[4] * OUTPUT_DIM[4] + OUTPUT_DIM[4]);
         max_pooling_cnn(&bufPoolInput, &bufConvInput, INPUT_DIM[5], NBYN[5]*2);
-        err = clEnqueueReadBuffer(queue, bufConvInput, CL_TRUE, 0, sizeof(float) * OUTPUT_DIM[5] * NBYN[5] * NBYN[5],
-            layer[5], 0, NULL, NULL);
-        CHECK_ERROR(err);
-        clFinish(queue);
 
         convolution_cnn(&bufConvInput, &bufConvMiddle, &bufNetwork, INPUT_DIM[6], OUTPUT_DIM[6], NBYN[6]);
         image_offset = 0; filter_offset += (9 * INPUT_DIM[6] * OUTPUT_DIM[6] + OUTPUT_DIM[6]);
@@ -312,14 +306,15 @@ void cnn(float* images, float* network, int* labels, float* confidences, int num
         image_offset = 0; filter_offset += (9 * INPUT_DIM[16] * OUTPUT_DIM[16] + OUTPUT_DIM[16]);
         max_pooling_cnn(&bufPoolInput, &bufConvInput, INPUT_DIM[17],  NBYN[17]*2);
 
-        err = clEnqueueReadBuffer(queue, bufConvInput, CL_TRUE, 0, sizeof(float) * OUTPUT_DIM[17] * NBYN[17] * NBYN[17],
-            layer[17], 0, NULL, NULL);
-        CHECK_ERROR(err);
+        fc_layer_cnn(&bufConvInput, &bufConvOutput, &bufNetwork, INPUT_DIM[18],OUTPUT_DIM[18]);
+        filter_offset += INPUT_DIM[18] * OUTPUT_DIM[18] + OUTPUT_DIM[18];
+        fc_layer_cnn(&bufConvOutput, &bufConvInput, &bufNetwork, INPUT_DIM[19],OUTPUT_DIM[19]);
+        filter_offset += INPUT_DIM[19] * OUTPUT_DIM[19] + OUTPUT_DIM[19];
+        fc_layer_cnn(&bufConvInput, &bufConvOutput, &bufNetwork, INPUT_DIM[20],OUTPUT_DIM[20]);
+        filter_offset += INPUT_DIM[20] * OUTPUT_DIM[20] + OUTPUT_DIM[20];
         clFinish(queue);
-        
-        fc_layer(layer[17], layer[18], w[18], b[18], INPUT_DIM[18], OUTPUT_DIM[18]);
-        fc_layer(layer[18], layer[19], w[19], b[19], INPUT_DIM[19], OUTPUT_DIM[19]);
-        fc_layer(layer[19], layer[20], w[20], b[20], INPUT_DIM[20], OUTPUT_DIM[20]);
+        err = clEnqueueReadBuffer(read_queue, bufConvOutput, CL_TRUE, 0, sizeof(float) * OUTPUT_DIM[20]* NBYN[20] * NBYN[20], layer[20], 0, NULL, NULL);
+        CHECK_ERROR(err);
 
         softmax(layer[20], 10);
 
