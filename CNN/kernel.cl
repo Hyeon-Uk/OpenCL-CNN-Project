@@ -56,3 +56,21 @@ __kernel void pool(__global float *inputs, __global float *outputs, int INPUT_DI
 	}
 	output[output_nbyn*frow+fcol]=max;
 }
+
+__kernel void fclayer(__global float *inputs,__global float *outputs,__global float *filters,
+					int inDIM,int outDIM,int filter_offset){
+	int output_id=get_global_id(0);
+
+	__global float *input=inputs;
+	__global float *w=filters+filter_offset+(inDIM)*output_id;
+	__global float *b=filters+filter_offset+(inDIM*outDIM)+output_id;
+
+	float sum=0.0f;
+
+	for(int i=0;i<inDIM;i++){
+		sum+= input[i]* *(w+i);
+	}
+	sum+=(*b);
+	if(sum<=0) sum=0.0f;
+	outputs[output_id]=sum;
+}
