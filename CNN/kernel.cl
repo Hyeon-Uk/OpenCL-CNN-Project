@@ -36,3 +36,23 @@ __kernel void conv(__global float *inputs,__global float *outputs,__global float
 	output[nbyn*frow+fcol]=sum;
 }
 
+__kernel void pool(__global float *inputs, __global float *outputs, int INPUT_DIM,int nbyn){
+	int g_i=get_global_id(0);
+	int g_j=get_global_id(1);
+	int output_nbyn=nbyn/2;
+	int group_num=(g_i/output_nbyn);
+
+	int frow=g_j%output_nbyn;
+	int fcol=g_i%output_nbyn;
+
+	__global float *input=inputs+(nbyn*nbyn)*group_num;
+	__global float *output=outputs+(output_nbyn*output_nbyn)*group_num;
+	float max=0.0f;
+	for(int y=0;y<2;y++){
+		for(int x=0;x<2;x++){
+			float temp=input[nbyn*(2*frow+y)+(2*fcol+x)];
+			if(max<temp) max=temp;
+		}
+	}
+	output[output_nbyn*frow+fcol]=max;
+}
