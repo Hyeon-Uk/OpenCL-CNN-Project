@@ -20,7 +20,7 @@ cl_platform_id* platforms;
 cl_device_id* devices, device;
 cl_uint num_devices;
 cl_context context;
-cl_command_queue queue,read_queue;
+cl_command_queue write_queue,queue,read_queue;
 cl_program program;
 char* kernel_source;
 size_t kernel_source_size;
@@ -83,10 +83,13 @@ void cnn_init() {
     CHECK_ERROR(err);
 
     //Create Command Queue
-    queue = clCreateCommandQueue(context, device, 0, &err);
+    write_queue = clCreateCommandQueue(context, device, 0, &err);
     CHECK_ERROR(err);
 
-    read_queue = clCreateCommandQueue(context, device, 0, &err);
+    queue = clCreateCommandQueue(context, device, CL_QUEUE_PROFILING_ENABLE, &err);
+    CHECK_ERROR(err);
+
+    read_queue = clCreateCommandQueue(context, device, CL_QUEUE_PROFILING_ENABLE, &err);
     CHECK_ERROR(err);
 
     //Get SourceCode
@@ -238,8 +241,8 @@ void cnn(float* images, float* network, int* labels, float* confidences, int num
     bufImg = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(float) * num_images * 32 * 32 * 3, NULL, &err);
     CHECK_ERROR(err);
 
-    err = clEnqueueWriteBuffer(queue, bufImg, CL_FALSE, 0, sizeof(float) * num_images * 32 * 32 * 3, images, 0, NULL, NULL);
-    CHECK_ERROR(err);
+    //err = clEnqueueWriteBuffer(queue, bufImg, CL_FALSE, 0, sizeof(float) * num_images * 32 * 32 * 3, images, 0, NULL, NULL);
+    //CHECK_ERROR(err);
 
     bufNetwork = clCreateBuffer(context, CL_MEM_READ_ONLY, 60980520, NULL, &err);
     CHECK_ERROR(err);
@@ -259,10 +262,14 @@ void cnn(float* images, float* network, int* labels, float* confidences, int num
     bufPoolInput = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(float) * 32*32  * 512 , NULL, &err);
     CHECK_ERROR(err);
 
+    clFinish(queue);
+
     // allocate memory for layer
-    float* layer[21];
-    for (int i = 0; i < 21; ++i) {
-        layer[i] = (float*)malloc(sizeof(float) * OUTPUT_DIM[i] * NBYN[i] * NBYN[i]);
+    float** layer;
+    layer = (float**)malloc(sizeof(float*) * num_images);
+
+    for (int i = 0; i < num_images; ++i) {
+        layer[i] = (float*)malloc(sizeof(float) * OUTPUT_DIM[20] * NBYN[20] * NBYN[20]);
         if (layer[i] == NULL) {
             perror("malloc error");
         }
@@ -270,6 +277,9 @@ void cnn(float* images, float* network, int* labels, float* confidences, int num
 
     for (int i = 0; i < num_images; i++) {
         image_offset = i * 32 * 32 * 3 ; filter_offset = 0;
+        err = clEnqueueWriteBuffer(write_queue, bufImg, CL_TRUE, sizeof(float)*i*32*32*3, sizeof(float) * 32 * 32 * 3, images+image_offset, 0, NULL, NULL);
+        CHECK_ERROR(err);
+        clFinish(write_queue);
         convolution_cnn(&bufImg, &bufConvOutput, &bufNetwork, INPUT_DIM[0], OUTPUT_DIM[0], NBYN[0]);
         image_offset = 0; filter_offset += (9 * INPUT_DIM[0] * OUTPUT_DIM[0]+OUTPUT_DIM[0]);
         convolution_cnn(&bufConvOutput, &bufPoolInput, &bufNetwork, INPUT_DIM[1], OUTPUT_DIM[1], NBYN[1]);
@@ -313,12 +323,12 @@ void cnn(float* images, float* network, int* labels, float* confidences, int num
         fc_layer_cnn(&bufConvInput, &bufConvOutput, &bufNetwork, INPUT_DIM[20],OUTPUT_DIM[20]);
         filter_offset += INPUT_DIM[20] * OUTPUT_DIM[20] + OUTPUT_DIM[20];
         clFinish(queue);
-        err = clEnqueueReadBuffer(read_queue, bufConvOutput, CL_TRUE, 0, sizeof(float) * OUTPUT_DIM[20]* NBYN[20] * NBYN[20], layer[20], 0, NULL, NULL);
+        err = clEnqueueReadBuffer(read_queue, bufConvOutput, CL_TRUE, 0, sizeof(float) * OUTPUT_DIM[20]* NBYN[20] * NBYN[20], layer[i], 0, NULL, NULL);
         CHECK_ERROR(err);
 
-        softmax(layer[20], 10);
+        softmax(layer[i], 10);
 
-        labels[i] = find_max(layer[20], 10);
-        confidences[i] = layer[20][labels[i]];
+        labels[i] = find_max(layer[i], 10);
+        confidences[i] = layer[i][labels[i]];
     }
 }
