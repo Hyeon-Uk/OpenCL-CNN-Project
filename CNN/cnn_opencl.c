@@ -342,25 +342,19 @@ void cnn(float* images, float* network, int* labels, float* confidences, int num
         start=clock();
         err = clEnqueueWriteBuffer(write_queue, bufImg, CL_TRUE, sizeof(float) * image_index * 32 * 32 * 3, sizeof(float) * 32 * 32 * 3, images + image_offset, 0, NULL,&write_events[image_index]);
         CHECK_ERROR(err);
-        printf("Write Time = %lf sec\n", (double)(clock() - start) / CLK_TCK);
         //clFinish(write_queue);
-        start = clock();
         convolution_cnn(&bufImg, &bufConvOutput, &bufNetwork, INPUT_DIM[0], OUTPUT_DIM[0], NBYN[0],1);
         image_offset = 0; filter_offset += (9 * INPUT_DIM[0] * OUTPUT_DIM[0] + OUTPUT_DIM[0]);
         convolution_cnn(&bufConvOutput, &bufPoolInput, &bufNetwork, INPUT_DIM[1], OUTPUT_DIM[1], NBYN[1],0);
         image_offset = 0; filter_offset += (9 * INPUT_DIM[1] * OUTPUT_DIM[1] + OUTPUT_DIM[1]);
         max_pooling_cnn(&bufPoolInput, &bufConvInput, INPUT_DIM[2], NBYN[2] * 2);
-        printf("First Time = %lf sec\n", (double)(clock() - start) / CLK_TCK);
         
-        start = clock();
         convolution_cnn(&bufConvInput, &bufConvOutput, &bufNetwork, INPUT_DIM[3], OUTPUT_DIM[3], NBYN[3],0);
         image_offset = 0; filter_offset += (9 * INPUT_DIM[3] * OUTPUT_DIM[3] + OUTPUT_DIM[3]);
         convolution_cnn(&bufConvOutput, &bufPoolInput, &bufNetwork, INPUT_DIM[4], OUTPUT_DIM[4], NBYN[4],0);
         image_offset = 0; filter_offset += (9 * INPUT_DIM[4] * OUTPUT_DIM[4] + OUTPUT_DIM[4]);
         max_pooling_cnn(&bufPoolInput, &bufConvInput, INPUT_DIM[5], NBYN[5] * 2);
-        printf("Second = %lf sec\n", (double)(clock() - start) / CLK_TCK);
 
-        start = clock();
         convolution_cnn(&bufConvInput, &bufConvMiddle, &bufNetwork, INPUT_DIM[6], OUTPUT_DIM[6], NBYN[6],0);
         image_offset = 0; filter_offset += (9 * INPUT_DIM[6] * OUTPUT_DIM[6] + OUTPUT_DIM[6]);
         convolution_cnn(&bufConvMiddle, &bufConvOutput, &bufNetwork, INPUT_DIM[7], OUTPUT_DIM[7], NBYN[7],0);
@@ -368,9 +362,7 @@ void cnn(float* images, float* network, int* labels, float* confidences, int num
         convolution_cnn(&bufConvOutput, &bufPoolInput, &bufNetwork, INPUT_DIM[8], OUTPUT_DIM[8], NBYN[8],0);
         image_offset = 0; filter_offset += (9 * INPUT_DIM[8] * OUTPUT_DIM[8] + OUTPUT_DIM[8]);
         max_pooling_cnn(&bufPoolInput, &bufConvInput, INPUT_DIM[9], NBYN[9] * 2);
-        printf("Third = %lf sec\n", (double)(clock() - start) / CLK_TCK);
-
-        start = clock();
+        
         convolution_cnn(&bufConvInput, &bufConvMiddle, &bufNetwork, INPUT_DIM[10], OUTPUT_DIM[10], NBYN[10],0);
         image_offset = 0; filter_offset += (9 * INPUT_DIM[10] * OUTPUT_DIM[10] + OUTPUT_DIM[10]);
         convolution_cnn(&bufConvMiddle, &bufConvOutput, &bufNetwork, INPUT_DIM[11], OUTPUT_DIM[11], NBYN[11],0);
@@ -378,9 +370,7 @@ void cnn(float* images, float* network, int* labels, float* confidences, int num
         convolution_cnn(&bufConvOutput, &bufPoolInput, &bufNetwork, INPUT_DIM[12], OUTPUT_DIM[12], NBYN[12],0);
         image_offset = 0; filter_offset += (9 * INPUT_DIM[12] * OUTPUT_DIM[12] + OUTPUT_DIM[12]);
         max_pooling_cnn(&bufPoolInput, &bufConvInput, INPUT_DIM[13], NBYN[13] * 2);
-        printf("4th = %lf sec\n", (double)(clock() - start) / CLK_TCK);
-
-        start = clock();
+        
         convolution_cnn(&bufConvInput, &bufConvMiddle, &bufNetwork, INPUT_DIM[14], OUTPUT_DIM[14], NBYN[14],0);
         image_offset = 0; filter_offset += (9 * INPUT_DIM[14] * OUTPUT_DIM[14] + OUTPUT_DIM[14]);
         convolution_cnn(&bufConvMiddle, &bufConvOutput, &bufNetwork, INPUT_DIM[15], OUTPUT_DIM[15], NBYN[15],0);
@@ -388,20 +378,15 @@ void cnn(float* images, float* network, int* labels, float* confidences, int num
         convolution_cnn(&bufConvOutput, &bufPoolInput, &bufNetwork, INPUT_DIM[16], OUTPUT_DIM[16], NBYN[16],0);
         image_offset = 0; filter_offset += (9 * INPUT_DIM[16] * OUTPUT_DIM[16] + OUTPUT_DIM[16]);
         max_pooling_cnn(&bufPoolInput, &bufConvInput, INPUT_DIM[17], NBYN[17] * 2);
-        printf("5th = %lf sec\n", (double)(clock() - start) / CLK_TCK);
-
-        start = clock();
+        
         fc_layer_cnn(&bufConvInput, &bufConvOutput, &bufNetwork, INPUT_DIM[18], OUTPUT_DIM[18],0);
         filter_offset += INPUT_DIM[18] * OUTPUT_DIM[18] + OUTPUT_DIM[18];
         fc_layer_cnn(&bufConvOutput, &bufConvInput, &bufNetwork, INPUT_DIM[19], OUTPUT_DIM[19],0);
         filter_offset += INPUT_DIM[19] * OUTPUT_DIM[19] + OUTPUT_DIM[19];
         fc_layer_cnn(&bufConvInput, &bufResult, &bufNetwork, INPUT_DIM[20], OUTPUT_DIM[20],1);
-        printf("6th = %lf sec\n", (double)(clock() - start) / CLK_TCK);
-
-        start = clock();
+        
         err = clEnqueueReadBuffer(read_queue, bufResult, CL_TRUE, 0, sizeof(float) * 10, layer[image_index], 1 ,&operation_events[image_index], NULL);
         CHECK_ERROR(err);
-        printf("read = %lf sec\n", (double)(clock() - start) / CLK_TCK);
         softmax(layer[image_index], 10);
 
         labels[image_index] = find_max(layer[image_index], 10);
