@@ -1,4 +1,4 @@
-__kernel void conv(__global float *inputs,__global float *outputs,__global float *filters
+__kernel void conv0(__global float *inputs,__global float *outputs,__global float *filters
 					,int input_dim,int output_dim,int nbyn,int filter_offset,int image_offset){
 	int g_i=get_global_id(0);
 	int g_j=get_global_id(1);
@@ -35,6 +35,39 @@ __kernel void conv(__global float *inputs,__global float *outputs,__global float
 	if(sum<0) sum=0.0f;
 	output[nbyn*frow+fcol]=sum;
 }
+
+__kernel void conv(__global float *inputs,__global float *outputs,__global float *filters
+					,int input_dim,int output_dim,int nbyn,int filter_offset,int image_offset,__local float *sum){
+	int i_i=get_global_id(0);
+	int o_g=get_global_id(1);
+	int input_group=get_local_id(0);
+	__global float *input = inputs+image_offset+(nbyn*nbyn*input_group);
+	__global float *w=filters+filter_offset+(3*3*input_dim*o_g)+(3*3*input_group);
+	__global float *b=filters+filter_offset+(3*3*input_dim*output_dim)+o_g;
+	int frow=(i_i/input_dim)/nbyn;
+	int fcol=(i_i/input_dim)%nbyn;
+	int x,y;
+	float local_sum=0.0f;
+	for(int row=0;row<3;row++){
+		for(int col=0;col<3;col++){
+			x=col+fcol-1;
+			y=row+frow-1;
+			if (x >= 0 && x < nbyn && y >= 0 && y < nbyn) {
+				local_sum += (input[nbyn*y+x]*w[3*row+col]);
+			}
+		}
+	}
+	sum[input_group]=local_sum;
+	barrier(CLK_LOCAL_MEM_FENCE);
+	if(input_group==0){
+		float t_sum=0.0f;
+		for(int i=0;i<input_dim;i++){
+			t_sum+=sum[i];
+		}
+		outputs[nbyn*nbyn*o_g+frow*nbyn+fcol]=(t_sum+(*b)>=0?t_sum+(*b):0.0f);
+	}
+}
+
 
 __kernel void pool(__global float *inputs, __global float *outputs, int INPUT_DIM,int nbyn){
 	int g_i=get_global_id(0);
