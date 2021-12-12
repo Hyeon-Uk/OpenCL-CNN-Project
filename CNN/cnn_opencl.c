@@ -83,7 +83,7 @@ const int NBYN[] = {
 cl_platform_id platform;
 cl_device_id device;
 cl_context context;
-cl_command_queue queue,readQueue,writeQueue;
+cl_command_queue queue, readQueue, writeQueue;
 cl_program program;
 char* kernel_source;
 size_t kernel_source_size;
@@ -158,7 +158,7 @@ void cnn_init(void) {
     kernel_source = get_source_code("kernel.cl", &kernel_source_size);
 
     //Build Program
-    program = clCreateProgramWithSource(context, 1, (const char**)&kernel_source,&kernel_source_size, &err);
+    program = clCreateProgramWithSource(context, 1, (const char**)&kernel_source, &kernel_source_size, &err);
     CHECK_ERROR(err);
     err = clBuildProgram(program, 1, &device, NULL, NULL, NULL);
     build_err(program, device, err);
@@ -176,7 +176,7 @@ void cnn_init(void) {
     CHECK_ERROR(err);
 }
 
-void convolution(cl_mem* inputs, cl_mem* outputs, cl_mem* networks, int input_dim, int output_dim, int nbyn) {
+void convolution_cnn(cl_mem* inputs, cl_mem* outputs, cl_mem* networks, int input_dim, int output_dim, int nbyn) {
     //Set Group Size
     size_t global_size[2] = { nbyn * nbyn * output_dim,1 };
     size_t local_size[2] = { 256,1 };
@@ -224,7 +224,7 @@ void convolution(cl_mem* inputs, cl_mem* outputs, cl_mem* networks, int input_di
 
 }
 
-void max_pooling(cl_mem* inputs, cl_mem* outputs, int input_dim, int nbyn) {
+void max_pooling_cnn(cl_mem* inputs, cl_mem* outputs, int input_dim, int nbyn) {
     //Set Kernel Arg
     err = clSetKernelArg(kernel_pool, 0, sizeof(cl_mem), inputs);
     CHECK_ERROR(err);
@@ -234,16 +234,15 @@ void max_pooling(cl_mem* inputs, cl_mem* outputs, int input_dim, int nbyn) {
     CHECK_ERROR(err);
     err = clSetKernelArg(kernel_pool, 3, sizeof(cl_int), &nbyn);
     CHECK_ERROR(err);
-    
+
     //Set Group Size
     int output_nbyn = nbyn / 2;
     size_t global_size[2] = { input_dim * output_nbyn , output_nbyn };
-    size_t local_size[2] = { TS,TS };
 
     err = clEnqueueNDRangeKernel(queue, kernel_pool, 2, NULL, global_size, NULL, 0, NULL, NULL);
 }
 
-void fc_layer(cl_mem* inputs, cl_mem* outputs, cl_mem* networks, int input_dim, int output_dim) {
+void fc_layer_cnn(cl_mem* inputs, cl_mem* outputs, cl_mem* networks, int input_dim, int output_dim) {
     //Set Kernel Arg
     err = clSetKernelArg(kernel_fclayer, 0, sizeof(cl_mem), inputs);
     CHECK_ERROR(err);
@@ -259,8 +258,8 @@ void fc_layer(cl_mem* inputs, cl_mem* outputs, cl_mem* networks, int input_dim, 
     CHECK_ERROR(err);
 
     //Set Group Size
-    size_t global_size = output_dim < input_dim ? 256 : 512;
-    size_t local_size = 256;
+    size_t global_size = output_dim;
+    size_t local_size = TS;
     //Enqueue
     err = clEnqueueNDRangeKernel(queue, kernel_fclayer, 1, NULL, &global_size, &local_size, 0, NULL, NULL);
     CHECK_ERROR(err);
@@ -294,23 +293,23 @@ static int find_max(float* input, int classNum) {
     return maxIndex;
 }
 
-void cnn(float* images, float* network, int* labels, float* confidences, int num_of_image) {
+void cnn(float* images, float* network, int* labels, float* confidences, int num_images) {
     //Create and Write Buffer
-    bufImg = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(float) * num_of_image * 32 * 32 * 3, NULL, &err);
+    bufImg = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(float) * num_images * 32 * 32 * 3, NULL, &err);
     CHECK_ERROR(err);
-    err = clEnqueueWriteBuffer(queue, bufImg, CL_FALSE, 0, sizeof(float) * num_of_image * 32 * 32 * 3,images, 0, NULL, NULL);
-    CHECK_ERROR(err);
-
-    bufFilter= clCreateBuffer(context, CL_MEM_READ_ONLY,  60980520, NULL, &err);
-    CHECK_ERROR(err);
-    err = clEnqueueWriteBuffer(queue, bufFilter, CL_FALSE, 0,  60980520, network, 0, NULL, NULL);
+    err = clEnqueueWriteBuffer(queue, bufImg, CL_FALSE, 0, sizeof(float) * num_images * 32 * 32 * 3, images, 0, NULL, NULL);
     CHECK_ERROR(err);
 
-    bufConvInput= clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(float) * 64*32*32, NULL, &err);
+    bufFilter = clCreateBuffer(context, CL_MEM_READ_ONLY, 60980520, NULL, &err);
+    CHECK_ERROR(err);
+    err = clEnqueueWriteBuffer(queue, bufFilter, CL_FALSE, 0, 60980520, network, 0, NULL, NULL);
+    CHECK_ERROR(err);
+
+    bufConvInput = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(float) * 64 * 32 * 32, NULL, &err);
     CHECK_ERROR(err);
     bufConvOutput = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(float) * 64 * 32 * 32, NULL, &err);
     CHECK_ERROR(err);
-    bufConvExtend = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(float) * 64 * 32 * 32*9, NULL, &err);
+    bufConvExtend = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(float) * 64 * 32 * 32 * 9, NULL, &err);
     CHECK_ERROR(err);
     bufPoolInput = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(float) * 64 * 32 * 32, NULL, &err);
     CHECK_ERROR(err);
@@ -321,61 +320,69 @@ void cnn(float* images, float* network, int* labels, float* confidences, int num
     bufFCOutput = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(float) * 512, NULL, &err);
     CHECK_ERROR(err);
 
-    //Allocate Layer arrays
-    float* layer=(float*)malloc(sizeof(float) * 10);
-	
+    // allocate memory for layer
+    float** layer;
+    layer = (float**)malloc(sizeof(float*) * num_images);
 
-    for (int i = 0; i < num_of_image; ++i) {
+    for (int i = 0; i < num_images; ++i) {
+        layer[i] = (float*)malloc(sizeof(float) * OUTPUT_DIM[20] * NBYN[20] * NBYN[20]);
+        if (layer[i] == NULL) {
+            perror("malloc error");
+        }
+    }
+
+
+    for (int i = 0; i < num_images; ++i) {
         i_offset = i * 3 * 32 * 32; f_offset = 0;
-        convolution(&bufImg, &bufConvOutput, &bufFilter, INPUT_DIM[0], OUTPUT_DIM[0], NBYN[0]);
+        convolution_cnn(&bufImg, &bufConvOutput, &bufFilter, INPUT_DIM[0], OUTPUT_DIM[0], NBYN[0]);
         i_offset = 0; f_offset += (3 * 3 * INPUT_DIM[0] * OUTPUT_DIM[0]) + OUTPUT_DIM[0];
-        convolution(&bufConvOutput, &bufConvInput, &bufFilter, INPUT_DIM[1], OUTPUT_DIM[1], NBYN[1]);
+        convolution_cnn(&bufConvOutput, &bufConvInput, &bufFilter, INPUT_DIM[1], OUTPUT_DIM[1], NBYN[1]);
         f_offset += (3 * 3 * INPUT_DIM[2] * OUTPUT_DIM[2]) + OUTPUT_DIM[2];
-        max_pooling(&bufConvInput, &bufPoolOutput, INPUT_DIM[2], NBYN[2] * 2);
+        max_pooling_cnn(&bufConvInput, &bufPoolOutput, INPUT_DIM[2], NBYN[2] * 2);
 
-        convolution(&bufPoolOutput, &bufConvOutput, &bufFilter, INPUT_DIM[3], OUTPUT_DIM[3], NBYN[3]);
+        convolution_cnn(&bufPoolOutput, &bufConvOutput, &bufFilter, INPUT_DIM[3], OUTPUT_DIM[3], NBYN[3]);
         f_offset += (3 * 3 * INPUT_DIM[3] * OUTPUT_DIM[3]) + OUTPUT_DIM[3];
-        convolution(&bufConvOutput, &bufConvInput, &bufFilter, INPUT_DIM[4], OUTPUT_DIM[4], NBYN[4]);
+        convolution_cnn(&bufConvOutput, &bufConvInput, &bufFilter, INPUT_DIM[4], OUTPUT_DIM[4], NBYN[4]);
         f_offset += (3 * 3 * INPUT_DIM[5] * OUTPUT_DIM[5]) + OUTPUT_DIM[5];
-        max_pooling(&bufConvInput, &bufPoolOutput, INPUT_DIM[5], NBYN[5] * 2);
+        max_pooling_cnn(&bufConvInput, &bufPoolOutput, INPUT_DIM[5], NBYN[5] * 2);
 
-        convolution(&bufPoolOutput, &bufConvOutput, &bufFilter, INPUT_DIM[6], OUTPUT_DIM[6], NBYN[6]);
+        convolution_cnn(&bufPoolOutput, &bufConvOutput, &bufFilter, INPUT_DIM[6], OUTPUT_DIM[6], NBYN[6]);
         f_offset += (3 * 3 * INPUT_DIM[6] * OUTPUT_DIM[6]) + OUTPUT_DIM[6];
-        convolution(&bufConvOutput, &bufConvInput, &bufFilter, INPUT_DIM[7], OUTPUT_DIM[7], NBYN[7]);
+        convolution_cnn(&bufConvOutput, &bufConvInput, &bufFilter, INPUT_DIM[7], OUTPUT_DIM[7], NBYN[7]);
         f_offset += (3 * 3 * INPUT_DIM[7] * OUTPUT_DIM[7]) + OUTPUT_DIM[7];
-        convolution(&bufConvInput, &bufConvOutput, &bufFilter, INPUT_DIM[8], OUTPUT_DIM[8], NBYN[8]);
+        convolution_cnn(&bufConvInput, &bufConvOutput, &bufFilter, INPUT_DIM[8], OUTPUT_DIM[8], NBYN[8]);
         f_offset += (3 * 3 * INPUT_DIM[9] * OUTPUT_DIM[9]) + OUTPUT_DIM[9];
-        max_pooling(&bufConvOutput, &bufPoolOutput, INPUT_DIM[9], NBYN[9] * 2);
+        max_pooling_cnn(&bufConvOutput, &bufPoolOutput, INPUT_DIM[9], NBYN[9] * 2);
 
-        convolution(&bufPoolOutput, &bufConvOutput, &bufFilter, INPUT_DIM[10], OUTPUT_DIM[10], NBYN[10]);
+        convolution_cnn(&bufPoolOutput, &bufConvOutput, &bufFilter, INPUT_DIM[10], OUTPUT_DIM[10], NBYN[10]);
         f_offset += (3 * 3 * INPUT_DIM[10] * OUTPUT_DIM[10]) + OUTPUT_DIM[10];
-        convolution(&bufConvOutput, &bufConvInput, &bufFilter, INPUT_DIM[11], OUTPUT_DIM[11], NBYN[11]);
+        convolution_cnn(&bufConvOutput, &bufConvInput, &bufFilter, INPUT_DIM[11], OUTPUT_DIM[11], NBYN[11]);
         f_offset += (3 * 3 * INPUT_DIM[11] * OUTPUT_DIM[11]) + OUTPUT_DIM[11];
-        convolution(&bufConvInput, &bufConvOutput, &bufFilter, INPUT_DIM[12], OUTPUT_DIM[12], NBYN[12]);
+        convolution_cnn(&bufConvInput, &bufConvOutput, &bufFilter, INPUT_DIM[12], OUTPUT_DIM[12], NBYN[12]);
         f_offset += (3 * 3 * INPUT_DIM[13] * OUTPUT_DIM[13]) + OUTPUT_DIM[13];
-        max_pooling(&bufConvOutput, &bufPoolOutput, INPUT_DIM[13], NBYN[13] * 2);
+        max_pooling_cnn(&bufConvOutput, &bufPoolOutput, INPUT_DIM[13], NBYN[13] * 2);
 
-        convolution(&bufPoolOutput, &bufConvOutput, &bufFilter, INPUT_DIM[14], OUTPUT_DIM[14], NBYN[14]);
+        convolution_cnn(&bufPoolOutput, &bufConvOutput, &bufFilter, INPUT_DIM[14], OUTPUT_DIM[14], NBYN[14]);
         f_offset += (3 * 3 * INPUT_DIM[14] * OUTPUT_DIM[14]) + OUTPUT_DIM[14];
-        convolution(&bufConvOutput, &bufConvInput, &bufFilter, INPUT_DIM[15], OUTPUT_DIM[15], NBYN[15]);
+        convolution_cnn(&bufConvOutput, &bufConvInput, &bufFilter, INPUT_DIM[15], OUTPUT_DIM[15], NBYN[15]);
         f_offset += (3 * 3 * INPUT_DIM[15] * OUTPUT_DIM[15]) + OUTPUT_DIM[15];
-        convolution(&bufConvInput, &bufConvOutput, &bufFilter, INPUT_DIM[16], OUTPUT_DIM[16], NBYN[16]);
+        convolution_cnn(&bufConvInput, &bufConvOutput, &bufFilter, INPUT_DIM[16], OUTPUT_DIM[16], NBYN[16]);
         f_offset += (3 * 3 * INPUT_DIM[17] * OUTPUT_DIM[17]) + OUTPUT_DIM[17];
-        max_pooling(&bufConvOutput, &bufPoolOutput, INPUT_DIM[17], NBYN[17] * 2);
+        max_pooling_cnn(&bufConvOutput, &bufPoolOutput, INPUT_DIM[17], NBYN[17] * 2);
 
-        fc_layer(&bufPoolOutput, &bufFCOutput, &bufFilter, INPUT_DIM[18], OUTPUT_DIM[18]);
+        fc_layer_cnn(&bufPoolOutput, &bufFCOutput, &bufFilter, INPUT_DIM[18], OUTPUT_DIM[18]);
         f_offset += (INPUT_DIM[18] * OUTPUT_DIM[18]) + OUTPUT_DIM[18];
-        fc_layer(&bufFCOutput, &bufFCInput, &bufFilter, INPUT_DIM[19], OUTPUT_DIM[19]);
+        fc_layer_cnn(&bufFCOutput, &bufFCInput, &bufFilter, INPUT_DIM[19], OUTPUT_DIM[19]);
         f_offset += (INPUT_DIM[19] * OUTPUT_DIM[19]) + OUTPUT_DIM[19];
-        fc_layer(&bufFCInput, &bufFCOutput, &bufFilter, INPUT_DIM[20], OUTPUT_DIM[20]);
+        fc_layer_cnn(&bufFCInput, &bufFCOutput, &bufFilter, INPUT_DIM[20], OUTPUT_DIM[20]);
 
-        err = clEnqueueReadBuffer(queue, bufFCOutput, CL_TRUE, 0, sizeof(float) * 10, layer, 0, NULL, NULL);
+        err = clEnqueueReadBuffer(queue, bufFCOutput, CL_TRUE, 0, sizeof(float) * 10, layer[i], 0, NULL, NULL);
         CHECK_ERROR(err);
 
 
-        softmax(layer, 10);
-        
-        labels[i] = find_max(layer, 10);
-        confidences[i] = layer[labels[i]];
+        softmax(layer[i], 10);
+
+        labels[i] = find_max(layer[i], 10);
+        confidences[i] = layer[i][labels[i]];
     }
 }
