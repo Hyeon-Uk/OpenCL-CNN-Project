@@ -240,7 +240,7 @@ void max_pooling(cl_mem* inputs, cl_mem* outputs, int input_dim, int nbyn) {
     size_t global_size[2] = { input_dim * output_nbyn , output_nbyn };
     size_t local_size[2] = { TS,TS };
 
-    err = clEnqueueNDRangeKernel(queue, kernel_pool, 2, NULL, global_size, local_size, 0, NULL, NULL);
+    err = clEnqueueNDRangeKernel(queue, kernel_pool, 2, NULL, global_size, NULL, 0, NULL, NULL);
 }
 
 void fc_layer(cl_mem* inputs, cl_mem* outputs, cl_mem* networks, int input_dim, int output_dim) {
