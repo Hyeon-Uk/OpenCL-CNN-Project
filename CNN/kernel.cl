@@ -1,5 +1,6 @@
 __kernel void conv(__global float *inputs,__global float *outputs,__global float *filters
 					,int input_dim,int output_dim,int nbyn,int filter_offset){
+    //Tile Size
     int TS = 16;
 
     //filter matrix
@@ -12,41 +13,40 @@ __kernel void conv(__global float *inputs,__global float *outputs,__global float
     
 
     __global float* input = inputs;
+    __global float* output = outputs;
     __global float* filter = filters + filter_offset;
     __global float* b = filters + filter_offset + (input_dim*output_dim*9);
-    __global float* output = outputs;
 
-    __local float Asub[16][16];
-    __local float Bsub[16][16];
+    __local float filterSub[16][16];
+    __local float inputSub[16][16];
 
-    const int j = get_local_id(0);
-    const int i = get_local_id(1);
-    const int gj = get_group_id(0) * TS + j;//global_index
-    const int gi = get_group_id(1) * TS + i;//output_dim
+    const int row = get_local_id(0);
+    const int col = get_local_id(1);
+    const int g_row = get_group_id(0) * TS + row;//global_index
+    const int g_col = get_group_id(1) * TS + col;//output_dim
 
-    float sum = 0.0f;
+    __private float sum = 0.0f;
 
+    //Matrix Multiple With Tilling
     #pragma unroll
-    for (int t = 0; t < COL_A; t += TS) {
+    for (int i = 0; i < COL_A; i += TS) {
+        const int temp_row = i + row;
+        const int temp_col = i + col;
 
-        const int tj = t + j;
-        const int ti = t + i;
-
-       
-        Asub[i][j] = (gi < output_dim && tj < COL_A) ? filter[gi * COL_A + tj] : 0;
-        Bsub[i][j] = (ti < ROW_B&& gj < COL_B) ? input[ti * COL_B + gj] : 0;
+        filterSub[col][row] = (g_col < output_dim && temp_row < COL_A) ? filter[g_col * COL_A + temp_row] : 0;
+        inputSub[col][row] = (temp_col < ROW_B&& g_row < COL_B) ? input[temp_col * COL_B + g_row] : 0;
 
         barrier(CLK_LOCAL_MEM_FENCE);   
 
         #pragma unroll
         for (int k = 0; k < TS; k++) {
-            sum += Asub[i][k] * Bsub[k][j];
+            sum += filterSub[col][k] * inputSub[k][row];
         }
         barrier(CLK_LOCAL_MEM_FENCE);
     }
 
-    if (gi < ROW_A && gj < COL_B) {
-        output[gi * COL_B + gj] = (sum + b[gi] > 0 ? sum + b[gi] : 0);// Relu
+    if (g_col < ROW_A && g_row < COL_B) {
+        output[g_col * COL_B + g_row] = (sum + b[g_col] > 0 ? sum + b[g_col] : 0);
     }
 }
 
@@ -90,6 +90,7 @@ __kernel void pool(__global float *inputs, __global float *outputs, int input_di
 	__global float *input=inputs+(nbyn*nbyn)*group_num;
 	__global float *output=outputs+(output_nbyn*output_nbyn)*group_num;
 	float max=0.0f;
+
 	#pragma unroll
 	for(int y=0;y<2;y++){
 		#pragma unroll
@@ -106,7 +107,7 @@ __kernel void fclayer(__global float *inputs,__global float *outputs,__global fl
 					int input_dim,int output_dim,int f_offset){
     int TS=16;
     int l_i=get_local_id(0);
-	//int output_group=get_global_id(0);
+
     int output_group=get_group_id(0)*TS+l_i;
 	if(output_group>=output_dim) return;
 
