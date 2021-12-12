@@ -1,75 +1,82 @@
-__kernel void conv0(__global float *inputs,__global float *outputs,__global float *filters
-					,int input_dim,int output_dim,int nbyn,int filter_offset,int image_offset){
-	int g_i=get_global_id(0);
-	int g_j=get_global_id(1);
-	__global float *input = inputs+image_offset;
-	int group_num=(g_i/nbyn);
-
-	__global float *output = outputs+(nbyn*nbyn*group_num);
-	__global float *w=filters+filter_offset+(3*3*input_dim*group_num);
-	__global float *b=filters+filter_offset+(3*3*input_dim*output_dim)+group_num;
-
-	int x=0;
-	int y=0;
-
-	int frow=g_j%nbyn;
-	int fcol=g_i%nbyn;
-
-
-	float sum=0.0f;
-	int offset=nbyn*nbyn;
-	for(int i=0;i<input_dim;i++){
-		for(int row=0;row<3;row++){
-			for(int col=0;col<3;col++){
-				x=col+fcol-1;
-				y=row+frow-1;
-				if (x >= 0 && x < nbyn && y >= 0 && y < nbyn) {
-					sum += (input[nbyn*y+x]*w[3*row+col]);
-				}
-			}
-		}
-		input+=offset;
-		w+=9;
-	}
-	sum+=(*b);
-	if(sum<0) sum=0.0f;
-	output[nbyn*frow+fcol]=sum;
-}
-
 __kernel void conv(__global float *inputs,__global float *outputs,__global float *filters
-					,int input_dim,int output_dim,int nbyn,int filter_offset,int image_offset,__local float *sum){
-	int i_i=get_global_id(0);
-	int o_g=get_global_id(1);
-	int input_group=get_local_id(0);
-	__global float *input = inputs+image_offset+(nbyn*nbyn*input_group);
-	__global float *w=filters+filter_offset+(3*3*input_dim*o_g)+(3*3*input_group);
-	__global float *b=filters+filter_offset+(3*3*input_dim*output_dim)+o_g;
-	int frow=(i_i/input_dim)/nbyn;
-	int fcol=(i_i/input_dim)%nbyn;
-	int x,y;
-	float local_sum=0.0f;
-	for(int row=0;row<3;row++){
-		for(int col=0;col<3;col++){
-			x=col+fcol-1;
-			y=row+frow-1;
-			if (x >= 0 && x < nbyn && y >= 0 && y < nbyn) {
-				local_sum += (input[nbyn*y+x]*w[3*row+col]);
-			}
-		}
-	}
-	sum[input_group]=local_sum;
-	barrier(CLK_LOCAL_MEM_FENCE);
-	if(input_group==0){
-		float t_sum=0.0f;
-		for(int i=0;i<input_dim;i++){
-			t_sum+=sum[i];
-		}
-		outputs[nbyn*nbyn*o_g+frow*nbyn+fcol]=(t_sum+(*b)>=0?t_sum+(*b):0.0f);
-	}
+					,int input_dim,int output_dim,int nbyn,int filter_offset){
+	const int TS = 16;
+
+    const int ROW_A = output_dim; 
+    const int COL_B = nbyn * nbyn;
+
+    const int ROW_B = input_dim * 3 * 3;
+    const int COL_A = input_dim * 3 * 3;
+    
+
+    __global float* input = inputs;
+    __global float* filter = filters + filter_offset;
+    __global float* b = filters + filter_offset + (ROW_A * COL_A);
+    __global float* output = outputs;
+
+    __local float Asub[16][16];
+    __local float Bsub[16][16];
+
+    const int j = get_local_id(0);
+    const int i = get_local_id(1);
+    const int gj = get_group_id(0) * TS + j;
+    const int gi = get_group_id(1) * TS + i;
+
+    float sum = 0.0f;
+
+    #pragma unroll
+    for (int t = 0; t < COL_A; t += TS) {
+
+        const int tj = t + j;
+        const int ti = t + i;
+
+       
+        Asub[i][j] = (gi < ROW_A&& tj < COL_A) ? filter[gi * COL_A + tj] : 0;
+        Bsub[i][j] = (ti < ROW_B&& gj < COL_B) ? input[ti * COL_B + gj] : 0;
+
+        barrier(CLK_LOCAL_MEM_FENCE);   
+
+        #pragma unroll
+        for (int k = 0; k < TS; k++) {
+            sum += Asub[i][k] * Bsub[k][j];
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+    if (gi < ROW_A && gj < COL_B) {
+        output[gi * COL_B + gj] = (sum + b[gi] > 0 ? sum + b[gi] : 0);// Relu
+    }
+}
+
+__kernel void conv_ex(__global float *inputs,__global float *outputs,
+						int output_dim,int nbyn,int image_offset){
+	 int g_j = get_global_id(0);
+
+    __global float* input = inputs + image_offset;
+    __global float* output = outputs;
+
+
+    int rows = g_j / nbyn; // x*z 인덱스를 나타냄
+    int col = g_j % nbyn; // y 인덱스를 나타냄
+    int channel = rows / nbyn; // z 인덱스  
+    int row = rows - channel * nbyn; // x 인덱스 
+
+    #pragma unroll
+    for (int i = 0; i < 3; i++) {
+        #pragma unroll
+        for (int j = 0; j < 3; j++) {
+            int x = col + j - 1;
+            int y = row + i - 1;
+            if (x >= 0 && x < nbyn && y >= 0 && y < nbyn)
+                output[(((channel * 3 * 3) + (3 * i + j)) * (nbyn * nbyn)) + (row * nbyn + col)] = input[((channel * nbyn) + y) * nbyn + x];
+            else
+                output[(((channel * 3 * 3) + (3 * i + j)) * (nbyn * nbyn)) + (row * nbyn + col)] = 0.0f;
+        }
+    }
 }
 
 
-__kernel void pool(__global float *inputs, __global float *outputs, int INPUT_DIM,int nbyn){
+__kernel void pool(__global float *inputs, __global float *outputs, int input_dim,int nbyn){
 	int g_i=get_global_id(0);
 	int g_j=get_global_id(1);
 	int output_nbyn=nbyn/2;
@@ -81,7 +88,9 @@ __kernel void pool(__global float *inputs, __global float *outputs, int INPUT_DI
 	__global float *input=inputs+(nbyn*nbyn)*group_num;
 	__global float *output=outputs+(output_nbyn*output_nbyn)*group_num;
 	float max=0.0f;
+	#pragma unroll
 	for(int y=0;y<2;y++){
+		#pragma unroll
 		for(int x=0;x<2;x++){
 			float temp=input[nbyn*(2*frow+y)+(2*fcol+x)];
 			if(max<temp) max=temp;
@@ -90,20 +99,21 @@ __kernel void pool(__global float *inputs, __global float *outputs, int INPUT_DI
 	output[output_nbyn*frow+fcol]=max;
 }
 
-__kernel void fclayer(__global float *inputs,__global float *outputs,__global float *filters,
-					int inDIM,int outDIM,int filter_offset){
-	int output_id=get_global_id(0);
 
-	__global float *input=inputs;
-	__global float *w=filters+filter_offset+(inDIM)*output_id;
-	__global float *b=filters+filter_offset+(inDIM*outDIM)+output_id;
+__kernel void fclayer(__global float *inputs,__global float *outputs,__global float *filters,
+					int input_dim,int output_dim,int f_offset){
+	int output_group=get_global_id(0);
+	if(output_group>=output_dim) return;
+
+	__global float *w=filters+f_offset+(input_dim*output_group);
+	__global float *b=filters+f_offset+(input_dim*output_dim)+output_group;
 
 	float sum=0.0f;
 
-	for(int i=0;i<inDIM;i++){
-		sum+= input[i]* *(w+i);
+	#pragma unroll
+	for(int i=0;i<input_dim;i++){
+		sum += inputs[i]* (*(w+i));
 	}
-	sum+=(*b);
-	if(sum<=0) sum=0.0f;
-	outputs[output_id]=sum;
+	sum+= (*b);
+	outputs[output_group]= ( sum<=0 ? 0.0f : sum);
 }
