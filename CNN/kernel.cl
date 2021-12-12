@@ -1,17 +1,19 @@
 __kernel void conv(__global float *inputs,__global float *outputs,__global float *filters
 					,int input_dim,int output_dim,int nbyn,int filter_offset){
-	const int TS = 16;
+    int TS = 16;
 
-    const int ROW_A = output_dim; 
-    const int COL_B = nbyn * nbyn;
+    //filter matrix
+    int ROW_A = output_dim; 
+    int COL_A = input_dim * 3 * 3;
 
-    const int ROW_B = input_dim * 3 * 3;
-    const int COL_A = input_dim * 3 * 3;
+    //input matrix
+    int ROW_B = input_dim * 3 * 3;
+    int COL_B = nbyn * nbyn;
     
 
     __global float* input = inputs;
     __global float* filter = filters + filter_offset;
-    __global float* b = filters + filter_offset + (ROW_A * COL_A);
+    __global float* b = filters + filter_offset + (input_dim*output_dim*9);
     __global float* output = outputs;
 
     __local float Asub[16][16];
@@ -19,8 +21,8 @@ __kernel void conv(__global float *inputs,__global float *outputs,__global float
 
     const int j = get_local_id(0);
     const int i = get_local_id(1);
-    const int gj = get_group_id(0) * TS + j;
-    const int gi = get_group_id(1) * TS + i;
+    const int gj = get_group_id(0) * TS + j;//global_index
+    const int gi = get_group_id(1) * TS + i;//output_dim
 
     float sum = 0.0f;
 
@@ -31,7 +33,7 @@ __kernel void conv(__global float *inputs,__global float *outputs,__global float
         const int ti = t + i;
 
        
-        Asub[i][j] = (gi < ROW_A&& tj < COL_A) ? filter[gi * COL_A + tj] : 0;
+        Asub[i][j] = (gi < output_dim && tj < COL_A) ? filter[gi * COL_A + tj] : 0;
         Bsub[i][j] = (ti < ROW_B&& gj < COL_B) ? input[ti * COL_B + gj] : 0;
 
         barrier(CLK_LOCAL_MEM_FENCE);   
@@ -56,10 +58,10 @@ __kernel void conv_ex(__global float *inputs,__global float *outputs,
     __global float* output = outputs;
 
 
-    int rows = g_j / nbyn; // x*z 인덱스를 나타냄
-    int col = g_j % nbyn; // y 인덱스를 나타냄
-    int channel = rows / nbyn; // z 인덱스  
-    int row = rows - channel * nbyn; // x 인덱스 
+    int rows = g_j / nbyn; 
+    int col = g_j % nbyn; 
+    int dim = rows / nbyn; 
+    int row = rows - dim * nbyn; 
 
     #pragma unroll
     for (int i = 0; i < 3; i++) {
@@ -68,9 +70,9 @@ __kernel void conv_ex(__global float *inputs,__global float *outputs,
             int x = col + j - 1;
             int y = row + i - 1;
             if (x >= 0 && x < nbyn && y >= 0 && y < nbyn)
-                output[(((channel * 3 * 3) + (3 * i + j)) * (nbyn * nbyn)) + (row * nbyn + col)] = input[((channel * nbyn) + y) * nbyn + x];
+                output[((dim * 3 * 3) + (3 * i + j)) * (nbyn * nbyn) + (row * nbyn + col)] = input[((dim * nbyn) + y) * nbyn + x];
             else
-                output[(((channel * 3 * 3) + (3 * i + j)) * (nbyn * nbyn)) + (row * nbyn + col)] = 0.0f;
+                output[((dim * 3 * 3) + (3 * i + j)) * (nbyn * nbyn) + (row * nbyn + col)] = 0.0f;
         }
     }
 }
@@ -102,7 +104,10 @@ __kernel void pool(__global float *inputs, __global float *outputs, int input_di
 
 __kernel void fclayer(__global float *inputs,__global float *outputs,__global float *filters,
 					int input_dim,int output_dim,int f_offset){
-	int output_group=get_global_id(0);
+    int TS=16;
+    int l_i=get_local_id(0);
+	//int output_group=get_global_id(0);
+    int output_group=get_group_id(0)*TS+l_i;
 	if(output_group>=output_dim) return;
 
 	__global float *w=filters+f_offset+(input_dim*output_group);
