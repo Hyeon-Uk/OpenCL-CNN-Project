@@ -259,7 +259,7 @@ void fc_layer_cnn(cl_mem* inputs, cl_mem* outputs, cl_mem* networks, int input_d
 
     //Set Group Size
     size_t global_size = output_dim;
-    size_t local_size = TS;
+    size_t local_size = (output_dim!=10?TS:2);
     //Enqueue
     err = clEnqueueNDRangeKernel(queue, kernel_fclayer, 1, NULL, &global_size, &local_size, 0, NULL, NULL);
     CHECK_ERROR(err);
