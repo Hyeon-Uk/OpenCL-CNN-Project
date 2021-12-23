@@ -105,7 +105,7 @@ __kernel void pool(__global float *inputs, __global float *outputs, int input_di
 
 __kernel void fclayer(__global float *inputs,__global float *outputs,__global float *filters,
 					int input_dim,int output_dim,int f_offset){
-    int TS=16;
+    int TS=(output_dim!=10?16:2);
     int l_i=get_local_id(0);
 
     int output_group=get_group_id(0)*TS+l_i;
